@@ -1,0 +1,373 @@
+# ifndef _GENERIC_HASH_TABLE_
+ # define _GENERIC_HASH_TABLE_
+// ------------------------------ includes ------------------------------
+# include <stdbool.h>
+# include <stdlib.h>
+# include <stdio.h>
+# include <assert.h>
+# include "Key.h"
+# include "TableErrorHandle.h"
+# include "Group.h"
+
+// -------------------------- const definitions -------------------------
+# ifndef MAX_ROW_ELEMENTS
+# define MAX_ROW_ELEMENTS 2
+# endif
+
+/**
+* @def TRUE 1
+* @brief A macro that presents the number of the arguments that the user supposes to insert.
+*/
+# define TRUE 1
+
+/**
+* @def FALSE 0 * @brief A macro that presents the number of the arguments that the user supposes to insert.
+*/
+# define FALSE 0
+
+/**
+* @def NOT_FOUND -1
+* @brief A macro that presents the output when something is missing
+ */
+# define NOT_FOUND -1
+
+/**
+ * @def D_OF_BEGINNING 1
+* @brief A macro that presents the relation between the original size of the table and the current size of the table in
+* the initilaizing of the table
+ */
+ # define D_OF_BEGINNING 1
+
+ /**
+ * @def MEM_PROBLEM 1
+ * @brief A macro that presents that there is a problem with the memory
+ */
+ # define MEM_PROBLEM 1
+ /**
+* @def NO_MEM_PROBLEM 0
+* @brief A macro that presents that there is a problem with the memory
+ */
+
+# define NO_MEM_PROBLEM 0
+
+/**
+* @def EVEN_PLACES 2
+ * @brief A macro that presents the even places of the groups array of the table
+ */
+
+# define EVEN_PLACES 2
+ /**
+ * @def ODD_PLACES 1
+* @brief A macro that presents the odd places of the groups array of the table
+*/
+# define ODD_PLACES 1
+
+ /**
+ * @def REHASHING_SIZE 2
+ * @brief A macro that presents duplicating the table
+ */
+# define REHASHING_SIZE 2
+
+typedef void* DataP;
+typedef struct Table* TableP;
+typedef const void* ConstKeyP;
+
+ /**
+* @brief print function
+ *
+ */
+typedef void(*PrintDataFcn)(const void* data);
+ /**
+ * @brief This struct holds the table. Each table contains a size, a pointer to groups’ dynamic array, hashing
+ * fanction, printing functions, key’s functions, comarion function and d - the realation between the original size of
+ * the table and the current size = 2^(times of rehashings)
+ */
+typedef struct Table
+{
+size_t _originalTableSize;
+GroupP* groups;
+HashFcn _hfun;
+CloneKeyFcn _cloneKey;
+FreeKeyFcn _freeKey;
+PrintKeyFcn _printKeyFun;
+PrintDataFcn _printDataFun;
+ComparisonFcn _fcomp;
+int _d;
+} Table;
+
+// ------------------------------ functions -----------------------------
+
+/**
+* @brief updates the fields of the new table.
+ */
+static void createTableHelper(TableP newTableP, size_t tableSize, CloneKeyFcn cloneKey, FreeKeyFcn freeKey, \
+HashFcn hfun, PrintKeyFcn printKeyFun, PrintDataFcn printDataFun, ComparisonFcn fcomp)
+{
+    assert(newTableP != NULL);
+    newTableP->_originalTableSize = tableSize;
+    newTableP->_hfun = hfun;
+    newTableP->_cloneKey = cloneKey;
+    newTableP->_freeKey = freeKey;
+    newTableP->_printKeyFun = printKeyFun;
+    newTableP->_printDataFun = printDataFun;
+    newTableP->_fcomp = fcomp;
+    newTableP->_d = D_OF_BEGINNING;
+}
+ /**
+* @brief Allocate memory for a hash table with which uses the given functions.
+* tableSize is the number of cells in the hash table.
+* If run out of memory, free all the memory that was already allocated by the function,
+* report error MEM_OUT to the standard error and return NULL.
+* @return a pointer to the new table
+ */
+TableP createTable(size_t tableSize, CloneKeyFcn cloneKey, FreeKeyFcn freeKey,
+        \HashFcn hfun, PrintKeyFcn printKeyFun, PrintDataFcn printDataFun, ComparisonFcn fcomp)
+        {
+    TableP newTableP = (Table*)malloc(sizeof(Table));
+    if (newTableP != NULL && cloneKey != NULL && freeKey != NULL && hfun != NULL && printKeyFun != NULL
+    \&& printDataFun != NULL && fcomp != NULL)
+{
+        newTableP->groups = (GroupP*)malloc(tableSize * sizeof(GroupP));
+        if (newTableP->groups != NULL)
+        {
+            int groupsMemProblem = NO_MEM_PROBLEM;
+            size_t i = 0;
+            for (i = 0; i < tableSize; i++)
+            {
+                GroupP group = createGroup(fcomp, printKeyFun, printDataFun, cloneKey, freeKey);
+                if (group == NULL)
+                {
+                    groupsMemProblem = MEM_PROBLEM;
+                }
+                else
+                    {
+                    newTableP->groups[i] = group;
+                    }
+            }
+            if (groupsMemProblem)
+            {
+                for (i = 0; i < tableSize; i++)
+                {
+                    freeGroup(newTableP->groups[i]);
+                }
+            }
+            else
+                {
+                createTableHelper(newTableP, tableSize, cloneKey, freeKey, hfun, printKeyFun, \
+                printDataFun, fcomp);
+                return newTableP;
+                }
+        }
+        free(newTableP);
+        reportError(MEM_OUT);
+}
+    return NULL;
+        }
+
+/**
+* @brief this function duplicates the size of the table. It puts the original groups in the even places, and
+* initilaizing new empty groups in the odd places.
+* @param tableP the hash table to duplicate
+ */
+static void reHashingTable(TableP tableP)
+{
+    assert(tableP != NULL);
+    size_t i = 0;
+    GroupP* newGroups = (GroupP*)malloc(tableP->_originalTableSize * tableP->_d * REHASHING_SIZE * sizeof(GroupP));
+    for (i = 0; i < tableP->_originalTableSize * tableP->_d ; i++)
+    {
+        newGroups[EVEN_PLACES * i] = tableP->groups[i];
+        newGroups[(EVEN_PLACES * i) + ODD_PLACES] = createGroup(tableP->_fcomp, tableP->_printKeyFun, \
+        tableP->_printDataFun, tableP->_cloneKey, tableP->_freeKey);
+    }
+    tableP->_d *= REHASHING_SIZE;
+    free(tableP->groups);
+    tableP->groups = newGroups;
+}
+
+/**
+* @brief Insert an object to the table with key.
+* If all the cells appropriate for this object are full, duplicate the table.
+* If run out of memory, report MEM_OUT and do nothing (the table should stay at the same situation
+* as it was before the duplication).
+* @param table a pointer to the hash table
+* @param key the key of the element to insert
+* @param object the data of the element to insert
+* @return If everything is OK, return true. Otherwise (an error occured) return false;
+ */
+int insert(TableP table, ConstKeyP key, DataP object)
+{
+    if (table != NULL && key != NULL && object != NULL)
+    {
+        int arrCell = table->_d * (table->_hfun(key, table->_originalTableSize));
+        if (arrCell >= 0)
+        {
+            while ((arrCell < arrCell + (table->_d - 1)) && (getSize(table->groups[arrCell]) == MAX_ROW_ELEMENTS) \
+            && arrCell < ((int) table->_originalTableSize * table->_d) - 1)
+            {
+                arrCell++;
+            }
+            if (getSize(table->groups[arrCell]) == MAX_ROW_ELEMENTS)
+            {
+                reHashingTable(table);
+                arrCell = table->_d * (table->_hfun(key, table->_originalTableSize)) + ODD_PLACES;
+            }
+            bool isInsertSuccessful = insertElement(table->groups[arrCell], object, key);
+            if (isInsertSuccessful)
+            {
+                return TRUE;
+            }
+            else
+                {
+                reportError(MEM_OUT);
+                }
+        }
+    }
+    return FALSE;
+}
+/**
+* @brief this function searching the group of the element with the given key. It returns the group’s index in the
+* dynamic array of groups of the table.
+* @param table a pointer to the table that holds the groups array
+* @param key the key of the element to search
+* @return if there is an element with this key is returns the group’s index in the
+ * dynamic array of groups of the table. else it returns -1;
+ */
+ static int searchingElementGroup (TableP table, const void* key)
+ {
+     assert(table != NULL);
+     assert(key != NULL);
+     int arrCell = table->_d * (table->_hfun(key, table->_originalTableSize));
+     if (arrCell >= 0)
+     {
+         while ((arrCell < arrCell + (table->_d - 1)) && (getElementByKey(table->groups[arrCell], key) == NULL \
+         && arrCell < ((int) table->_originalTableSize * table->_d) - 1))
+         {
+             arrCell++;
+         }
+         return arrCell;
+     }
+     return NOT_FOUND;
+}
+/**
+* @brief remove an data from the table.
+* @param table a pointer to the hash table
+* @param key the key of the element to delete
+* @return If everything is OK, return the pointer to the ejected data. Otherwise return NULL;
+ */
+DataP removeData(TableP table, const void* key){
+    if (table != NULL && key != NULL)
+    {
+        int arrCell = searchingElementGroup(table, key);
+        if (arrCell != NOT_FOUND)
+        {
+            if (getElementByKey(table->groups[arrCell], key) != NULL)
+            {
+                DataP dataP = removeElement(table->groups[arrCell], key);
+                return dataP;
+            }
+        }
+    }
+    return NULL;
+}
+ /**
+* @brief Search the table and look for an object with the given key.
+* If such object is found fill its cell number into arrCell (where 0 is the
+* first cell), and its placement in the list into listNode (when 0 is the
+* first node in the list, i.e. the node that is pointed from the table
+* itself).
+ * If the key was not found, fill both pointers with value of -1.
+ * @param table a pointer to the hash table
+ * @param key the key of the element to find
+ * @param arrCell a pointer to an int to fill with the element’s group in the group’s array
+ * @param listNode a pointer to an int to fill with the element’s place in the group
+ * @return return pointer to the data or null
+ */
+DataP findData(const TableP table, const void* key, int* arrCell, int* listNode) {
+    if (table != NULL && key != NULL) {
+        int currentArrCell = searchingElementGroup(table, key);
+        if (currentArrCell != NOT_FOUND) {
+            ElementP elementP = getElementByKey(table->groups[currentArrCell], key);
+            if (elementP != NULL) {
+                *arrCell = currentArrCell;
+                *listNode = getIndex(elementP);
+                return getData(elementP);
+            }
+        }
+    }
+    *arrCell = NOT_FOUND;
+    *listNode = NOT_FOUND;
+    return NULL;
+}
+
+ /**
+ * @brief return a pointer to the data that exist in the table in cell number arrCell (where 0 is the
+ * first cell), and placment at listNode in the list (when 0 is the
+ * first node in the list, i.e. the node that is pointed from the table
+ * itself).
+ * @param table a pointer to the hash table
+ * @param arrCell the element’s group in the group’s array
+ * @param listNode the element’s place in the group
+ * @return a pointer to the data of the element. If such data not exist return NULL
+ */
+DataP getDataAt(const TableP table, int arrCell, int listNode)
+{
+    if (table != NULL && arrCell >= 0 && listNode >= 0) {
+        return getData(getElementByIndex(table->groups[arrCell], listNode));
+    }
+ return NULL;
+ }
+
+
+ /**
+ * @brief return the pointer to the key that exist in the table in cell number arrCell (where 0 is the
+ * first cell), and placment at listNode in the list (when 0 is the
+ * first node in the list, i.e. the node that is pointed from the table
+ * itself).
+ * @param table a pointer to the hash table
+ * @param arrCell the element’s group in the group’s array
+* @param listNode the element’s place in the group
+ * @return a pointer to the key of the element. If such key not exist return NULL
+ */
+ConstKeyP getKeyAt(const TableP table, int arrCell, int listNode)
+{
+    if (table != NULL && arrCell >= 0 && listNode >= 0)
+    {
+        return getKey(getElementByIndex(table->groups[arrCell], listNode));
+    }
+    return NULL;
+}
+
+ /**
+ * @brief Print the table (use the format presented in PrintTableExample).
+ * @param table a pointer to the hash table
+ */
+void printTable(const TableP table)
+{
+    if (table != NULL)
+    {
+        size_t i = 0;
+        for (i = 0; i < table->_originalTableSize * table->_d; i++)
+        {
+            printGroup(table->groups[i], (int) i);
+        }
+    }
+}
+ /**
+ * @brief Free all the memory allocated for the table. * It’s the user responsibility to call this function before exiting the program.
+ * @param table a pointer to the hash table
+ */
+void freeTable(TableP table)
+ {
+    if (table != NULL){
+        size_t i = 0;
+        for (i = 0; i < table->_originalTableSize * table->_d ; i++)
+        {
+            freeGroup(table->groups[i]);
+        }
+        free(table);
+        table = NULL;
+    }
+}
+endif // _GENERIC_HASH_TABLE_
+
